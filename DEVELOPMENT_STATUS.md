@@ -1,6 +1,6 @@
 # Development Status
 
-Last updated: 2026-08-10
+Last updated: 2026-08-14
 
 이 문서는 새 개발 세션이 현재 작업 지점부터 바로 이어갈 수 있도록 관리하는
 인수인계 문서다. 전체 시스템 구조와 장기 결정은
@@ -104,20 +104,30 @@ Wakaama–tinyDTLS 통합부에서 재핸드셰이크 반환값 처리와 connec
 dangling pointer 및 `dtlsSession` 누수를 수정했다. Credential 강제 폐기와
 일반 종료 모두 세그멘테이션 오류 없이 정리되는 것을 확인했다.
 
-### Persistence and artifacts
-- PostgreSQL 18 개발 환경을 `server/compose.yaml`로 실행
-- Spring JDBC와 Flyway PostgreSQL 연동 완료
-- `V1__create_devices.sql`: Device Registry schema
-- `V2__create_device_credentials.sql`: PSK credential metadata와 lifecycle schema
-- Device 등록, 단건 조회, 목록 조회 API 구현
-- credential 생성, 조회, revoke, rotation API 구현
-- credential 생성과 rotation은 실행 중 SecurityStore에 즉시 반영
-- revoke와 rotation은 기존 DTLS session을 즉시 종료
-- PostgreSQL에는 secret 원문이 아닌 `secret_reference`만 저장
-- 현재 개발 secret provider는 `env:` 환경변수 참조만 지원
-- 제품 secret store와 Admin API 인증 및 audit는 아직 미구현
-- Firmware binary storage는 local filesystem 기반이며 Object Storage adapter는 미구현
-- CDN: 현재 milestone에 사용하지 않음
+### Persistence, credential and OTA orchestration
+
+- PostgreSQL 18, Spring JDBC와 Flyway 연동 완료
+- Device Registry와 credential lifecycle을 PostgreSQL에 영속화
+- 장치별 PSK는 AES-256-GCM으로 암호화하여 DB에 저장
+- 서버 공통 master key는 Git에서 제외한 로컬 파일로 관리
+- 장치별 PSK 환경변수 provider는 제거
+- create, rotate, revoke를 실행 중 Leshan SecurityStore에 반영
+- hawkBit 1.1.0, 전용 PostgreSQL, RabbitMQ와 hawkBit UI를 compose로 실행
+- hawkBit이 Software Module, artifact, Distribution Set, Target Action을 관리
+- artifact binary는 `hawkbit-artifact-data` Docker volume에 저장
+- Spring은 DMF 명령을 LwM2M Object 5 명령으로 변환
+- Spring은 hawkBit artifact를 임시 staging한 뒤 CoAP Block2로 Device에 제공
+- Admin UI에서 Device, DTLS credential과 LwM2M Object Read를 관리
+- hawkBit UI에서 firmware upload와 배포 이력을 관리
+- hawkBit Forced Action으로 STM32F429ZI `0.2.0 → 0.3.0` 실제 OTA 완료
+
+현재 경계:
+
+- Linux reference의 LwM2M control plane은 DTLS-PSK 적용
+- STM32 reference의 LwM2M control과 artifact download는 아직 NoSec CoAP
+- artifact CoAPS와 장치별 다운로드 권한 검사는 미구현
+- Device DB와 hawkBit Target lifecycle 동기화는 미구현
+- 완료된 DMF Action의 중복 전달을 막는 영속 멱등성 처리가 필요
 
 ## 4. 현재 저장소 구조
 
@@ -280,18 +290,18 @@ latest 응답을 확인했다.
 
 ## 7. 현재 한계와 기술 부채
 
-- Reference Client의 endpoint, Server URI와 port가 아직 code에 고정됨
-- Artifact data plane은 NoSec CoAP Block2이며 CoAPS, 인증, retry 정책이 없음
-- Linux Backend는 reference simulation이며 실제 hash/signature와 Bootloader 검증은 장치 통합 범위임
-- boot recovery는 파일 marker 기반 simulation임
-- credential secret은 임시 `env:` provider를 사용하며 제품용 secret store는 없음
-- credential 관리 API에 Admin 인증, 권한과 audit log가 없음
-- DB와 실행 중 SecurityStore 사이의 장애 복구 및 재동기화 절차가 없음
-- Device ownership, disable/delete lifecycle과 사용자 model이 없음
-- telemetry는 범용 ingestion/history 구조가 아니며 BMS 중심 임시 구현임
-- Firmware artifact metadata와 Object Storage adapter가 없음
+- DMF Action 상태가 메모리에만 있어 완료 직후 중복 명령을 재처리할 수 있음
+- Device Registry와 hawkBit Target lifecycle이 아직 분리되어 있음
+- LwM2M 등록 시 DB 확인 없이 `THING_CREATED`를 발행함
+- Device별 `NOSEC`/`PSK` 보안 정책과 등록 Authorizer가 없음
+- STM32 reference는 LwM2M control과 artifact download 모두 NoSec임
+- artifact CoAPS와 identity/action별 다운로드 권한 검사가 없음
+- PSK provisioning은 수동이며 서버 rotation이 장치 credential을 변경하지 않음
+- hawkBit Target liveness와 LwM2M Registration 갱신이 완전히 동기화되지 않음
+- STM32 reference의 signature, anti-rollback과 전원 차단 rollback은 미구현
+- Admin 인증, 권한과 audit log가 없음
+- telemetry는 범용 ingestion/history 구조가 아님
 - custom Object model은 classpath에서 정적으로 로드됨
-- automated server integration test와 전체 CTest 등록이 없음
 
 ## 8. Milestone 3 Direct Device Firmware Update 구현 결과
 
@@ -429,25 +439,29 @@ Client 종료 후 `expired=false`인 정상 Deregistration도 확인했다.
 
 현재 경계:
 
-- LwM2M control plane은 DTLS-PSK 적용 완료
-- Device와 credential metadata 및 create/revoke/rotation은 PostgreSQL에 영속화
-- 실제 PSK 값은 임시 환경변수 provider를 사용하며 제품 secret store는 미구현
-- Artifact data plane은 아직 NoSec CoAP
+- Linux reference의 LwM2M control plane은 DTLS-PSK 적용 완료
+- Linux reference의 환경변수 PSK는 장치 측 credential 저장소를 흉내 냄
+- 서버 PSK는 PostgreSQL에 AES-256-GCM 암호문으로 저장
+- STM32 reference의 LwM2M control plane은 아직 NoSec CoAP
+- Linux와 STM32의 Artifact data plane은 아직 NoSec CoAP
 
 ### 8.7 PostgreSQL Device Registry와 PSK lifecycle 구현 완료
 
 구현 결과:
 
-- PostgreSQL 18, Spring JDBC, Flyway 연동
-- `devices`와 `device_credentials` schema 및 migration 적용
+- PostgreSQL 18, Spring JDBC와 Flyway 연동
+- `devices`와 `device_credentials` schema 및 migration V1–V4 적용
 - endpoint 중복과 공백 입력 방지
-- Device 생성, 단건 조회, 목록 조회 API 구현
-- PSK secret 원문 대신 `secret_reference`만 DB에 저장
-- DB의 ACTIVE credential을 시작 시 Leshan SecurityStore에 로드
-- 여러 Device credential을 하나의 서버 process에서 관리
-- 실행 중 credential 생성, revoke, rotation 반영
+- Device 생성, 단건 조회와 목록 조회 API 구현
+- PSK를 AES-256-GCM으로 암호화하여 `encrypted_secret`에 저장
+- `secret_reference`는 `db:{credentialId}` 형식의 내부 참조로 사용
+- master key는 Git에서 제외한 `server/config/credential-master.key`로 관리
+- 장치별 PSK 환경변수 provider 제거
+- ACTIVE credential을 서버 시작 시 복호화하여 Leshan SecurityStore에 로드
+- 실행 중 credential 생성, revoke와 rotation 반영
 - revoke와 rotation에서 기존 DTLS session 즉시 종료
 - credential 이력을 `ACTIVE`, `ROTATED`, `REVOKED` 상태로 보존
+- 서버 rotation은 장치 credential을 자동 변경하지 않으며 장치 provisioning이 별도로 필요
 
 Credential API:
 
@@ -482,17 +496,48 @@ POST /api/devices/{endpoint}/credentials/psk/rotate
 signature가 아니다. DTLS, signed manifest, anti-rollback과 전원 차단
 rollback은 장치 제품 통합 단계의 남은 항목이다.
 
+### 8.9 hawkBit DMF 실제 보드 OTA 완료
+
+구성:
+
+- hawkBit Update Server와 UI `1.1.0`
+- hawkBit 전용 PostgreSQL과 RabbitMQ
+- artifact binary는 `hawkbit-artifact-data` Docker volume에 저장
+- Spring이 DMF와 LwM2M Object 5 사이의 Adapter 역할 수행
+- Spring이 artifact를 staging하고 CoAP Block2 URI로 변환
+
+실기 검증:
+
+- Software Module `STM32F429ZI Firmware / 0.3.0`
+- artifact 크기 `76164` bytes
+- SHA-256 `4faf1a611607915b69834922ecb42a5484e1c0353b4f05e6de401281907c0304`
+- Distribution Set `STM32F429ZI Release 2 / 0.3.0`
+- Target `stm32-f429zi-01`
+- Forced Action으로 실제 보드 `0.2.0 → 0.3.0` 업데이트
+- DMF 상태 `DOWNLOAD → DOWNLOADED → RUNNING → FINISHED`
+- hawkBit Installed Distribution Set이 `0.3.0`으로 변경
+- EVSE_BOOT가 staged firmware를 적용하고 Update Result `1` 보고
+
+확인된 문제:
+
+- 실제 Device에서는 CoAP proxy public host를 LAN 주소로 설정해야 함
+- 완료 직후 재등록의 `THING_CREATED`가 같은 Action을 다시 전달할 수 있음
+- hawkBit 최종 상태는 `FINISHED`를 유지했지만 Spring이 중복 명령을 재처리함
+- PostgreSQL 기반 Action 멱등성 처리가 다음 작업임
+- 76164 bytes 다운로드에 약 31초가 걸림
+- 현재 38400 baud UART와 512-byte Block2 순차 처리의 실효 속도는 약 2.4 KiB/s
+
 ## 9. 이후 작업 순서
 
-1. Firmware artifact metadata와 storage adapter
-2. Manifest 배포 계약과 보안 실패 Result mapping
-3. 제품 secret store, credential provisioning, Admin 인증과 audit
-4. 범용 telemetry ingestion 및 Observe/Notify
-5. Device ownership과 사용자 model
-6. Device Profile과 동적 Object model registry
-7. OTA Campaign과 staged rollout
-8. Admin UI
-9. 독립적인 LwM2M 구현체와 상호운용성 검증
+1. PostgreSQL 기반 DMF Action 멱등성 및 재시작 복구
+2. Device Registry를 LwM2M 등록과 hawkBit Target의 source of truth로 연결
+3. hawkBit Download Only, Soft, Time Forced Action 의미 연결
+4. firmware manifest와 signature metadata 
+5. Device별 `NOSEC`/`PSK` 모드와 Leshan Authorizer 구현
+6. Artifact CoAPS와 endpoint/action별 다운로드 권한 검사
+7. STM32 DTLS-PSK 상호운용과 credential provisioning 계약 검증
+8. Admin 인증, 권한과 audit
+9. 범용 telemetry ingestion과 Object model registry
 
 ## 10. Build와 실행
 
@@ -509,39 +554,52 @@ OTA_LWM2M_PSK_KEY_HEX=00112233445566778899aabbccddeeff \
 /tmp/ota-linux-reference-client-build/ota_linux_reference_client
 ```
 
-### Embedded Server
+### Embedded Server와 hawkBit
 
 ```bash
 cd server
+
+docker compose up -d \
+  postgres hawkbit-postgres rabbitmq hawkbit hawkbit-ui
+
 mvn -o package
 
-OTA_LWM2M_PSK_ENDPOINT=linux-reference-01 \
-OTA_LWM2M_PSK_IDENTITY=linux-reference-01 \
-OTA_LWM2M_PSK_KEY_HEX=00112233445566778899aabbccddeeff \
-java -jar target/ota-server-0.0.1-SNAPSHOT.jar
+OTA_HAWKBIT_DMF_ENABLED=true \
+java -jar target/ota-server-0.0.1-SNAPSHOT.jar \
+  --ota.hawkbit.coap-proxy.public-host=10.10.16.58
 ```
 
-Linux reference client는 CoAPS `5684`와 실행 환경의 DTLS-PSK를 사용한다.
-Smoke test는 회귀 검증을 위해 NoSec CoAP `5683`을 사용한다.
-문서의 PSK는 localhost 개발 검증 전용이며 제품 credential로 사용하지 않는다.
+public-host는 실제 Device가 접근할 수 있는 서버 주소로 지정한다.
+localhost Linux reference만 사용할 때는 127.0.0.1을 사용할 수 있다.
+서버는 장치별 PSK 환경변수를 요구하지 않는다. 암호화된 ACTIVE credential을
+PostgreSQL에서 읽고 config/credential-master.key로 복호화한다.
+Linux reference client의 PSK 환경변수는 실제 장치의 secure provisioning 저장소를 흉내 내는 개발용 입력이다.
 
 ## 11. 현재 회귀 검증 기준
 
-- Linux reference client와 smoke test build
-- Spring Server package build
-- Server의 CoAP `5683`, CoAPS `5684` listen
-- NoSec smoke test Registration 응답
-- 올바른 PSK에서 DTLS Registration과 READY 전환
+### Server와 Persistence
+
+- Spring Server Maven build
+- PostgreSQL, hawkBit, RabbitMQ와 hawkBit UI compose 실행
+- 암호화된 PSK가 DB에 저장되고 평문이 응답에 노출되지 않음
+- 장치별 PSK 환경변수 없이 서버 재시작
+- 올바른 PSK에서 Linux reference Registration과 READY
 - 잘못된 PSK에서 Registration 거부
-- `/5/0/3`, `/5/0/5` DTLS Observe 연결
-- Firmware Status API 응답
-- Package URI 다운로드 후 State `2`, Update Result `0`
-- staging file과 artifact의 `cmp` 일치
-- 40초 이후 DTLS 재핸드셰이크
-- Client 종료 후 정상 Deregistration
-- F429ZI Package URI Block2 download와 State `2`
-- F429ZI EVSE_BOOT 적용 후 Update Result `1`
-- F429ZI application flash readback과 artifact byte 일치
+- credential create, rotate, revoke와 DTLS session 종료
+- Admin UI의 Device 목록, credential 관리와 LwM2M Resource Read
+
+### Firmware와 hawkBit
+
+- Firmware State와 Update Result Observe
+- hawkBit artifact SHA-256과 업로드 원본 일치
+- DMF `DOWNLOAD_AND_INSTALL` 수신
+- Spring staging과 CoAP Block2 URI 생성
+- STM32 State `1 → 2 → 3`
+- EVSE_BOOT staging 적용
+- STM32 application `0.2.0 → 0.3.0`
+- 재등록 시 Update Result `1`
+- hawkBit Action `DOWNLOAD → DOWNLOADED → RUNNING → FINISHED`
+- hawkBit Installed Distribution Set `0.3.0`
 
 ## 12. 새 세션 시작 지침
 
@@ -550,31 +608,21 @@ Smoke test는 회귀 검증을 위해 NoSec CoAP `5683`을 사용한다.
 - `ARCHITECTURE.md`
 - `DEVELOPMENT_STATUS.md`
 - `DEVICE_CLIENT_CONTRACT.md`
-- `clients/device-integration-kit/README.md`
-- `clients/device-integration-kit/include/firmware_download_transport.h`
-- `clients/device-integration-kit/include/firmware_update_backend.h`
-- `clients/device-integration-kit/include/firmware_update_service.h`
-- `clients/device-integration-kit/src/firmware_update_service.c`
-- `clients/device-integration-kit/adapters/wakaama/src/object_firmware.c`
-- `clients/linux-reference/include/linux_firmware_update_backend.h`
-- `clients/linux-reference/src/linux_firmware_update_backend.c`
-- `clients/linux-reference/include/reference_client_app.hpp`
-- `clients/linux-reference/src/reference_client_app.cpp`
-- `clients/linux-reference/CMakeLists.txt`
-- `clients/f429zi-reference/README.md`
-- `experiments/wakaama/examples/client/common/object_firmware.c`
-- `server/src/main/java/ota/platform/server/config/LeshanServerConfiguration.java`
-- `server/src/main/java/ota/platform/server/controller/FirmwareController.java`
-- `server/src/main/java/ota/platform/server/firmware/FirmwareCapabilities.java`
-- `server/src/main/java/ota/platform/server/firmware/FirmwareStatus.java`
-- `server/src/main/resources/models/firmware-update-v1_2.xml`
 
 Milestone 1 Client foundation과 Milestone 2 Server foundation을 다시 구현하지 않는다.
 Device Integration Kit의 Adapter, Service, Download Transport와 Backend 경계도
 다시 설계하지 않는다.
 
-Linux와 STM32F429ZI Package URI OTA vertical slice는 완료됐다.
-다음에는 firmware artifact metadata와 storage/orchestration 경계를 결정한다.
-STM32 reference는 Flash와 Bootloader 통합 가능성까지 검증했으며, 제품용
-crypto, anti-rollback과 전원 차단 rollback은 장치 개발자가 통합한다.
-`/25` 또는 Gateway-하위 장치 protocol 방향으로 돌아가지 않는다.
+Milestone 1–3의 Client, Server, Device Integration Kit와 OTA vertical slice는
+다시 구현하지 않는다.
+
+hawkBit UI에서 artifact를 업로드하고 DMF Adapter를 통해 실제 STM32F429ZI를
+`0.2.0`에서 `0.3.0`으로 업데이트한 경로까지 완료됐다. Spring에 별도의
+firmware repository와 Campaign 기능을 다시 만들지 않는다.
+
+다음 작업은 `이후 작업 순서`를 따르며 첫 항목은 PostgreSQL 기반 DMF Action
+멱등성과 재시작 복구다.
+
+현재 STM32 reference는 NoSec 개발 검증 장치다. Linux reference에서 검증한
+DTLS-PSK를 STM32 실제 보안 검증 완료로 간주하지 않는다. `/25` 또는
+Gateway-하위 장치 protocol 방향으로 돌아가지 않는다.

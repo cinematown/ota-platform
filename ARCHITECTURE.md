@@ -47,22 +47,23 @@ model과 UI metadata를 등록하는 것으로 끝내며 Java 서버를 다시 �
 장치와 서버 사이에 항상 거치는 Gateway를 두지 않는다.
 
 ```text
- [Admin UI]
-      |
-      | HTTP/REST, later WebSocket/SSE
-      v
- [Spring Boot OTA Server]
-      |-- Embedded Leshan LwM2M Server
-      |-- Device Registry / Telemetry / OTA Campaign
-      |-- PostgreSQL ---------------- structured data
-      |-- Object Storage ------------ firmware binary
-      |
-      | LwM2M over CoAP/DTLS
-      |
-      +-------------------+-------------------+
-      v                   v                   v
- [MCU Device]     [Embedded Linux]     [Another Vendor Device]
-  /3 /5 objects     /3 /5 objects       conforming LwM2M Client
+  [Spring Admin UI]                  [hawkBit UI]
+ Device / Credential / Object       Firmware / Distribution / Action
+          |                                      |
+          v                                      v
+ [Spring OTA Integration Server] <-- DMF --> [hawkBit]
+  |-- Device Registry                         |-- Software Repository
+  |-- Credential lifecycle                    |-- Distribution / Rollout
+  |-- Embedded Leshan                         |-- Action history
+  |-- DMF-LwM2M Adapter                       |-- Artifact storage
+  |-- Artifact CoAP(S) proxy                  |
+  |-- PostgreSQL                              |-- PostgreSQL / filesystem
+          |                                      |
+          +----------- RabbitMQ -----------------+
+          |
+          | LwM2M CoAP/DTLS + Artifact CoAP(S)
+          v
+ [MCU / Embedded Linux LwM2M Client]
 ```
 
 이 구조는 개인 custom protocol로 돌아가는 것이 아니다. LwM2M Client와 LwM2M
@@ -99,43 +100,52 @@ Gateway Object Instance와 별도의 `deviceId`를 연결하는 계층은 기본
 
 ## 4. Central Server
 
-상태: **기본 LwM2M 서버와 BMS Read API 구현 완료, 제품 기능 확장 중**
+상태: **LwM2M, Device Registry와 hawkBit OTA 수직 경로 구현 완료**
 
-기술 스택:
+### 4.1 Spring OTA Integration Server
 
-- Java 21
-- Maven
-- Spring Boot 4.1.0
-- Eclipse Leshan 2.0.0-M18 embedded server
-- PostgreSQL 18 계획
+Spring은 장치 관리와 protocol integration을 담당한다.
 
-현재 구현:
+- PostgreSQL Device Registry와 credential lifecycle
+- AES-256-GCM 기반 PSK 암호문 저장
+- Embedded Leshan LwM2M Server
+- LwM2M Registration과 Object Read/Observe/Execute
+- hawkBit DMF 명령을 Object 5 명령으로 변환
+- Object 5 상태와 결과를 hawkBit Action 상태로 변환
+- hawkBit artifact staging과 Device용 CoAP(S) proxy
+- Device, credential과 LwM2M Object용 Admin UI
 
-- Spring이 `LeshanServerConfiguration`을 component scan으로 발견
-- `LeshanServer`를 Spring Bean으로 생성하고 시작 및 종료 lifecycle 관리
-- 기본 LwM2M Object model과 `models/bms.xml` 로드
-- Client 등록, 갱신, 해제 event logging
-- 등록된 endpoint에 `/33000/0/0` Read 전송
-- 읽은 BMS voltage를 process memory에 endpoint별 최신값으로 보관
-- HTTP API로 현재 Read와 최신값 조회
+Leshan은 Spring 내부 library이며 별도 제품 서버가 아니다.
 
-서버의 장치 중심 이름은 `DeviceRegistrationListener`, `DeviceController`,
-`/api/devices`를 사용한다. HTTP `502 Bad Gateway` 상태 이름은 장치 Gateway
-도메인과 무관한 표준 HTTP 용어다.
+### 4.2 hawkBit
 
-목표 책임:
+hawkBit은 firmware OTA orchestration을 담당한다.
 
-- 사용자, 장치 소유권, endpoint, credential 관리
-- LwM2M registration과 session 관리
-- Object model 및 Device Profile 관리
-- telemetry ingestion, 최신 상태, 이력 저장
-- firmware artifact metadata와 binary 위치 관리
-- OTA campaign 생성, 대상 선택, 동시성 및 rollout policy 관리
-- `/5` 명령 전송과 진행 상태 및 결과 추적
-- Admin API와 Web UI 제공
+- Software Module과 artifact
+- Distribution Set
+- Target Action과 상태 이력
+- rollout과 배포 정책
+- firmware 운영자 UI
+- artifact 원본 저장
 
-Leshan은 Spring Boot 애플리케이션 내부 library다. 별도 Demo Server를 제품
-서버 앞에 두거나 custom protocol로 변환하지 않는다.
+Spring은 hawkBit 내부 DB를 직접 수정하지 않고 Management API와 DMF 계약을
+통해서만 연동한다.
+
+### 4.3 Source of truth
+
+| 데이터 | Source of truth |
+|---|---|
+| Device, endpoint, enabled 상태 | Spring PostgreSQL |
+| Device credential과 보안 정책 | Spring PostgreSQL |
+| 실시간 LwM2M Registration | Leshan runtime |
+| Object 상태와 telemetry | Spring |
+| Firmware metadata와 binary | hawkBit |
+| Distribution, Action과 rollout 이력 | hawkBit |
+| hawkBit Target | Spring Device의 OTA projection |
+
+Device를 Spring DB에 등록하면 hawkBit Target을 자동 생성한다. LwM2M 등록 시
+DB에 존재하고 enabled인 Device만 허용하고 hawkBit에 연결 상태를 전달한다.
+hawkBit UI에서 Target을 별도로 수동 등록하지 않는다.
 
 ## 5. Device Client와 Device SDK
 
@@ -285,128 +295,250 @@ UI 전달을 막지 않도록 저장 작업을 분리하고 batch 정책을 둘 
 
 ## 8. Firmware OTA
 
-### 8.1 두 상태 머신의 책임
+### 8.1 책임 분리
 
-LwM2M Client를 탑재해도 실제 안전 업데이트 기능은 장치에 필요하다.
-
-| LwM2M `/5`와 Client library | Device application/bootloader |
+| 구성요소 | 책임 |
 |---|---|
-| Package 또는 Package URI 수신 | 임시 영역 또는 flash에 기록 |
-| 표준 State와 Update Result 보고 | hash와 signature 검증 |
-| Update Execute 수신 | A/B slot 전환 또는 설치 |
-| CoAP/DTLS, block transfer, retry | reboot, boot confirmation, rollback |
+| hawkBit | artifact, Distribution Set, Target Action과 rollout |
+| Spring DMF Adapter | hawkBit 명령과 LwM2M Object 5 상태 변환 |
+| Spring Artifact Proxy | hawkBit artifact staging과 Device용 CoAP(S) 제공 |
+| LwM2M Client와 Object 5 | Package URI, Update Execute와 상태 보고 |
+| Device application | 다운로드 transport와 staging flash 기록 |
+| Bootloader | 설치, boot confirmation과 rollback |
+| Device 보안 계층 | signature, anti-rollback과 secure credential 저장 |
 
-Custom Device-Gateway protocol을 만들면 오른쪽 기능은 그대로 필요하고 왼쪽의
-관리 protocol까지 별도로 구현해야 한다.
+LwM2M Client가 있어도 flash와 Bootloader의 안전 업데이트 기능은 장치에
+별도로 필요하다.
 
-### 8.2 목표 Pull OTA flow
+### 8.2 OTA flow
 
 ```text
-관리자가 firmware artifact 업로드
--> Object Storage에 binary 저장
--> PostgreSQL에 version/hash/signature/location metadata 저장
--> OTA Campaign과 대상 Device 선택
--> 서버가 /5/0/1 Package URI Write
--> Device가 artifact를 직접 다운로드
--> Device가 hash/signature 검증 후 /5 State=Downloaded 보고
--> 서버가 /5/0/2 Update Execute
--> Device가 설치 및 reboot
--> boot confirmation 또는 rollback
--> /5/0/5 Update Result와 새 /3 firmware version 수집
+운영자가 hawkBit UI에 firmware 업로드
+→ hawkBit가 artifact와 metadata 저장
+→ Software Module을 Distribution Set으로 구성
+→ Target에 Action 할당
+→ hawkBit가 DMF DOWNLOAD_AND_INSTALL 발행
+→ Spring이 artifact를 staging하고 Device용 URI 생성
+→ Spring이 /5/0/1 Package URI Write
+→ Device가 artifact를 Block2로 다운로드
+→ /5/0/3 State=2 보고
+→ Spring이 /5/0/2 Update Execute
+→ /5/0/3 State=3 보고
+→ Device reboot와 Bootloader 설치
+→ 새 application이 /5/0/5 Update Result=1 보고
+→ Spring이 DMF FINISHED 발행
+→ hawkBit가 Distribution Set을 installed로 기록
+```
+### 8.3 상태 변환
+
+| LwM2M 값 | hawkBit Action 상태 |
+|---|---|
+| State `1` Downloading | `DOWNLOAD` |
+| State `2` Downloaded | `DOWNLOADED` |
+| State `3` Updating | `RUNNING` |
+| Update Result `1` Success | `FINISHED` |
+| Update Result `10` Canceled | `CANCELED` |
+| Update Result `11` Deferred | `WARNING`, Action 유지 |
+| 그 외 실패 Result | `ERROR` |
+
+현재 완전 검증된 hawkBit Action Type은 Forced다.
+Download Only: 다운로드는 가능하지만 완료와 후속 설치 lifecycle 보완 필요
+Soft: 사용자 승인과 장치 설치 동의 흐름 미구현
+Time Forced: 예약 시각과 강제 전환 정책 미구현
+
+### 8.4 현재 보안 경계
+
+현재 Linux reference의 LwM2M control plane은 DTLS-PSK를 사용한다.
+STM32 reference의 LwM2M control과 모든 artifact download는 아직 NoSec CoAP다.
+
+목표 경계:
+```text
+LwM2M control  → CoAPS + Device credential
+Artifact pull  → CoAPS + Device identity/action 권한 검사
+Firmware 적용 → Device signature와 anti-rollback 검증
 ```
 
-현재 Wakaama source에는 예제 `object_firmware.c`가 있지만 실제 binary 저장,
-URI 다운로드, 검증, 재부팅, 상태 영속화를 구현하지 않는 demonstration
-skeleton이다. 제품 코드는 이 예제를 그대로 완료 구현으로 간주하지 않고,
-표준 Resource callback과 장치별 update backend의 경계를 명시적으로 만든다.
-
-첫 통합은 Linux의 임시 firmware 저장 영역과 simulated install/reboot로 `/5`
-전체 protocol 흐름을 검증한다. 실제 MCU에서는 같은 관리 흐름에 flash driver와
-bootloader callback을 연결한다.
+DTLS-PSK는 통신 상대와 전송 구간을 보호한다. Firmware signature는 binary의
+출처와 무결성을 장치에서 검증하며 서로 대체할 수 없다.
 
 ## 9. Persistence와 artifact storage
 
-### 9.1 PostgreSQL
+### 9.1 Spring PostgreSQL
 
-PostgreSQL에는 query와 transaction이 필요한 구조화 데이터를 저장한다.
+Spring PostgreSQL은 장치 관리 데이터를 저장한다.
 
-- User와 Device ownership
-- Device, endpoint, credential metadata
-- Device Profile과 Object model metadata
-- Telemetry sample 및 latest state
-- Firmware artifact metadata, hash, signature, version
-- OTA Campaign, Target, 상태 전이와 audit log
+- Device와 endpoint
+- enabled 상태와 향후 ownership
+- credential identity와 lifecycle 상태
+- AES-256-GCM으로 암호화된 PSK
+- 향후 DMF Action 멱등성 receipt
+- 향후 telemetry latest/history와 audit
 
-### 9.2 Object Storage
+Firmware binary, Software Module, Distribution Set과 rollout은 Spring DB에
+중복 저장하지 않는다.
 
-실제 `.bin`, `.hex`, `.swu` 같은 firmware binary는 Object Storage에
-저장한다. PostgreSQL에는 binary 자체가 아니라 위치와 검증 metadata를 둔다.
+### 9.2 hawkBit 저장소
 
-초기 개발에서는 local filesystem으로 시작할 수 있다. 제품화 시 MinIO 또는
-S3-compatible storage로 교체한다. CDN은 장치 수와 지역이 늘어날 때 붙이는
-선택 사항이며 현재 milestone에는 포함하지 않는다.
+hawkBit 전용 PostgreSQL은 다음 metadata를 소유한다.
+
+- Software Module
+- artifact filename, size와 hash
+- Distribution Set
+- Target와 Action
+- rollout과 상태 이력
+
+실제 firmware binary는 현재 Docker named volume인
+`hawkbit-artifact-data`에 저장된다.
+
+```text
+hawkBit container: /app/artifactrepo
+```
+
+Spring의 /tmp/ota-hawkbit-artifacts는 Device 전송을 위한 임시 staging
+cache이며 artifact 원본 저장소가 아니다. 삭제되더라도 hawkBit에서 다시
+다운로드할 수 있어야 한다.
+
+### 9.3 저장소 확장
+
+현재 local filesystem 기반 hawkBit artifact storage는 단일 서버와
+포트폴리오 검증에 사용한다.
+
+제품 규모에서 필요한 경우 hawkBit artifact repository 확장 지점을 통해
+MinIO 또는 S3-compatible storage로 교체한다. CDN은 장치 수와 지역이 늘어날
+때 추가하며 현재 milestone에는 포함하지 않는다.
+
+### 9.4 일관성 경계
+
+Spring은 hawkBit DB를 직접 조회하거나 수정하지 않는다.
+
+```text
+관리 작업     → hawkBit Management API
+배포 명령/상태 → RabbitMQ DMF
+```
+두 PostgreSQL 사이의 분산 transaction을 만들지 않는다. Spring은
+endpoint, actionId, softwareModuleId만 connector 처리와 멱등성을 위해
+보관하고, OTA 이력의 원본은 hawkBit으로 유지한다.
 
 ## 10. Security와 신뢰성
 
-현재 NoSec `coap://`는 localhost 개발 실험에만 사용한다.
+### 10.1 현재 상태
 
-제품 적용 전에 필요한 항목:
+- Linux reference의 LwM2M control은 DTLS-PSK 적용
+- 서버 PSK는 PostgreSQL에 AES-256-GCM 암호문으로 저장
+- master key는 Git에서 제외된 로컬 파일로 관리
+- STM32 reference의 LwM2M control은 NoSec CoAP
+- Artifact Proxy는 NoSec CoAP
+- STM32 firmware 검증은 CRC32와 vector 검사까지 구현
+- 제품용 signature와 anti-rollback은 미구현
+- Spring과 hawkBit은 RabbitMQ credential과 Target Token을 사용
 
-- Device별 DTLS PSK, RPK 또는 certificate provisioning
-- credential rotation과 revoke
-- firmware manifest의 hash와 digital signature 검증
-- anti-rollback version policy
-- update state의 전원 중단 후 복구
-- retry, timeout, staged rollout, 동시 업데이트 제한
-- OTA 작업과 소유권 변경의 audit log
+현재 STM32 NoSec 경로는 실제 보드 기능 검증용이며 제품 보안 완료 상태가 아니다.
+
+### 10.2 Device 등록과 DTLS 정책
+
+Device Registry가 endpoint와 허용된 보안 모드의 source of truth다.
+
+```text
+LwM2M Registration
+→ endpoint가 DB에 존재하는지 검사
+→ enabled 상태 검사
+→ Device security mode 검사
+→ PSK Device이면 DTLS identity와 DB credential 검증
+→ 통과한 Registration만 관리
+```
+
+NOSEC는 명시적으로 설정된 개발 Device에만 허용한다. 제품 Device의 기본
+모드는 PSK 또는 이후 지원할 certificate 기반 모드다.
+
+PSK는 네트워크로 전달하거나 직접 비교하지 않는다. DTLS handshake에서
+identity로 활성 credential을 찾고 복호화한 PSK로 인증한다.
+
+### 10.3 Credential provisioning
+
+동일한 identity와 PSK가 서버와 장치에 각각 provisioning되어야 한다.
+
+-서버: 암호화된 PSK와 lifecycle metadata
+-장치: secure storage 또는 제조 provisioning 영역
+-Linux reference 환경변수: 장치 secure storage를 흉내 내는 개발 입력
+
+서버에서 PSK를 rotation해도 장치의 PSK가 자동 변경되지는 않는다. 실제
+in-band rotation은 LwM2M Bootstrap 또는 별도 provisioning 절차가 필요하다.
+
+### 10.4 Artifact 보호
+
+목표 Artifact Proxy는 CoAPS를 사용한다.
+
+```text
+DTLS identity
+→ DB의 ACTIVE credential 검증
+→ identity와 endpoint 연결
+→ endpoint에 할당된 action인지 확인
+→ 해당 artifact만 다운로드 허용
+```
+
+CoAPS는 인증과 전송 구간을 보호한다. Device는 이와 별도로 firmware
+signature와 anti-rollback 정책을 검증해야 한다.
+
+### 10.5 남은 신뢰성 항목
+
+-PostgreSQL 기반 DMF Action 멱등성과 재시작 복구
+-credential과 Leshan SecurityStore 장애 복구
+-전원 차단 중 firmware 적용 rollback
+-staged rollout과 오류 임계치
+-Admin 인증, 권한과 audit log
 
 ## 11. Milestones
 
-### Milestone 1: Direct LwM2M Client Foundation
+### Milestone 1: LwM2M Client Foundation
 
-상태: **완료, Linux reference client foundation으로 정리**
+상태: **완료**
 
-- Wakaama Client 초기화와 Object 수명 관리
-- Leshan Registration과 READY 전환
-- 반복 UDP event loop
-- `/3`, `/33000/0/0` Read
-- 정상 Deregistration
+- Linux Wakaama reference client
+- Object 3, 5와 custom Object 33000
+- Registration, Read, Observe와 Deregistration
+- DTLS-PSK와 tinyDTLS lifecycle 검증
 
-### Milestone 2: Embedded Leshan Server Foundation
+### Milestone 2: Spring LwM2M Server와 Persistence
 
-상태: **기본 흐름 완료**
+상태: **완료**
 
-- Spring Boot application에 Leshan lifecycle 통합
-- BMS Object model 로드
-- registration listener
-- BMS Read API와 in-memory latest store
+- Embedded Leshan lifecycle
+- PostgreSQL Device Registry
+- AES-256-GCM credential 저장
+- create, rotate와 revoke
+- Device와 LwM2M Object Admin UI
 
-### Milestone 3: Direct Device Firmware Update
+### Milestone 3: Firmware OTA Vertical Slice
 
-상태: **다음 작업**
+상태: **완료**
 
-- 표준 `/5` Object를 reference client에 연결 완료
-- State와 Update Result local Read 검증 완료
-- Embedded Leshan을 통한 State와 Update Result Read 검증
-- firmware storage/verification/install callback 경계 설계
-- Package URI download와 simulated install
-- Execute, reboot simulation, success/failure/result end-to-end 검증
+- Device Integration Kit와 Object 5 version 1.2
+- Linux simulated install와 restart recovery
+- STM32F429ZI flash staging과 EVSE_BOOT 통합
+- hawkBit artifact, Distribution Set과 DMF 연동
+- hawkBit UI에서 실제 STM32 `0.2.0 → 0.3.0` Forced OTA
 
-### Milestone 4: Persistence and Generic Device Model
+### Milestone 4: Device와 Action Lifecycle
 
-- PostgreSQL schema와 migration
-- Object Storage adapter
-- Device/ownership/credential model
-- 범용 telemetry ingestion과 history
-- 동적 Object model 및 Device Profile 관리
+상태: **진행 예정**
 
-### Milestone 5: Fleet Operations
+구체적인 순서는 `DEVELOPMENT_STATUS.md`의 `이후 작업 순서`를 따른다.
 
-- OTA Campaign과 staged rollout
-- 동시성, retry, pause/cancel policy
-- Admin UI
-- 여러 독립 LwM2M Client 구현과 상호운용성 검증
-- optional Edge Gateway는 실제 비 IP 요구가 생긴 경우에만 별도 milestone으로 추가
+- DMF Action 멱등성과 재시작 복구
+- Device Registry 기반 LwM2M Authorizer
+- hawkBit Target projection
+- hawkBit Action Type 의미 연결
+
+### Milestone 5: Product Security와 Fleet 확장
+
+상태: **계획**
+
+- Artifact CoAPS와 endpoint/action 권한
+- 실제 Device DTLS provisioning
+- firmware manifest와 signature 계약
+- Admin 인증과 audit
+- telemetry history와 staged rollout
+- optional Gateway는 비 IP 장치 요구가 생길 때만 추가
 
 ## 12. 아키텍처 원칙
 
@@ -415,6 +547,7 @@ S3-compatible storage로 교체한다. CDN은 장치 수와 지역이 늘어날 
 - 장치 한 대 추가는 provisioning 작업이며 코드 변경 작업이 아니다.
 - Client SDK는 교체 가능하고 서버는 특정 SDK에 종속되지 않는다.
 - firmware 전달과 update 제어를 분리한다.
-- DB에는 구조화된 상태를, Object Storage에는 firmware binary를 저장한다.
+- Spring DB는 Device와 credential을, hawkBit은 firmware와 배포 이력을 소유한다.
+- Spring staging cache는 artifact 원본 저장소로 사용하지 않는다.
 - 실제 flash/bootloader 구현 전 simulated backend로 정상, 실패, rollback을 검증한다.
 - 학습 단계에서는 작은 단위로 구현하고 매 단계 build와 실행 결과를 확인한다.

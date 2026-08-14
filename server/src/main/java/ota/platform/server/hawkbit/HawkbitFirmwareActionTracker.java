@@ -91,6 +91,49 @@ public class HawkbitFirmwareActionTracker {
         return previous == null || previous.intValue() != updateResult;
     }
 
+    public void restore(
+            HawkbitConnectorAction persisted) {
+
+        HawkbitFirmwareAction action =
+                new HawkbitFirmwareAction(
+                        persisted.tenant(),
+                        persisted.endpoint(),
+                        persisted.actionId(),
+                        persisted.softwareModuleId(),
+                        persisted.installAfterDownload());
+
+        activeActions.put(
+                action.endpoint(),
+                action);
+
+        if (persisted.installRequested()) {
+            installRequestedActions.put(
+                    action.endpoint(),
+                    action.actionId());
+        } else {
+            installRequestedActions.remove(
+                    action.endpoint());
+        }
+
+        if (persisted.lastFirmwareState() != null) {
+            lastFirmwareStates.put(
+                    action.endpoint(),
+                    persisted.lastFirmwareState());
+        } else {
+            lastFirmwareStates.remove(
+                    action.endpoint());
+        }
+
+        if (persisted.lastUpdateResult() != null) {
+            lastUpdateResults.put(
+                    action.endpoint(),
+                    persisted.lastUpdateResult());
+        } else {
+            lastUpdateResults.remove(
+                    action.endpoint());
+        }
+    }
+
     public void remove(String endpoint, long actionId) {
         activeActions.computeIfPresent(
                 endpoint,

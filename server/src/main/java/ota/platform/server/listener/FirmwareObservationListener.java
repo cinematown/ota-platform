@@ -5,6 +5,8 @@ import ota.platform.server.hawkbit.HawkbitDmfPublisher;
 import ota.platform.server.hawkbit.HawkbitFirmwareActionTracker;
 import ota.platform.server.firmware.FirmwareCommandResult;
 import ota.platform.server.firmware.FirmwareUpdateDeviceService;
+import ota.platform.server.hawkbit.HawkbitConnectorActionRepository;
+import ota.platform.server.hawkbit.HawkbitConnectorActionState;
 
 import org.eclipse.leshan.core.node.LwM2mResource;
 import org.eclipse.leshan.core.observation.CompositeObservation;
@@ -26,15 +28,18 @@ public class FirmwareObservationListener implements ObservationListener {
     private final HawkbitFirmwareActionTracker actionTracker;
     private final HawkbitDmfPublisher dmfPublisher;
     private final FirmwareUpdateDeviceService firmwareUpdateDeviceService;
+    private final HawkbitConnectorActionRepository actionRepository;
 
     public FirmwareObservationListener(
             HawkbitFirmwareActionTracker actionTracker,
             HawkbitDmfPublisher dmfPublisher,
-            @Lazy FirmwareUpdateDeviceService firmwareUpdateDeviceService) {
+            @Lazy FirmwareUpdateDeviceService firmwareUpdateDeviceService,
+            HawkbitConnectorActionRepository actionRepository) {
 
         this.actionTracker = actionTracker;
         this.dmfPublisher = dmfPublisher;
         this.firmwareUpdateDeviceService = firmwareUpdateDeviceService;
+        this.actionRepository = actionRepository;
     }
 
     private static final Logger logger = LoggerFactory.getLogger(FirmwareObservationListener.class);
@@ -147,19 +152,35 @@ public class FirmwareObservationListener implements ObservationListener {
                 default -> null;
             };
 
-            if (status == null
-                    || !actionTracker.markFirmwareState(
-                            endpoint,
-                            action.actionId(),
-                            state)) {
+            if (status == null) {
                 return;
             }
+
+            String detail =
+                    "LwM2M Firmware State changed to " + state;
+
+            HawkbitConnectorActionState persistedStatus =
+                    HawkbitConnectorActionState.valueOf(
+                            status.name());
+
+            if (!actionRepository.updateFirmwareState(
+                    action,
+                    state,
+                    persistedStatus,
+                    detail)) {
+                return;
+            }
+
+            actionTracker.markFirmwareState(
+                    endpoint,
+                    action.actionId(),
+                    state);
 
             dmfPublisher.publishActionStatus(
                     action.actionId(),
                     action.softwareModuleId(),
                     status,
-                    "LwM2M Firmware State changed to " + state);
+                    detail);
 
             if (state != 2
                     || !action.installAfterDownload()
@@ -174,12 +195,20 @@ public class FirmwareObservationListener implements ObservationListener {
                         endpoint);
 
                 if (!installResult.accepted()) {
+                    String errorDetail =
+                            "LwM2M Update Execute rejected: "
+                                    + installResult.detail();
+
+                    actionRepository.updateStatus(
+                            action,
+                            HawkbitConnectorActionState.ERROR,
+                            errorDetail);
+
                     dmfPublisher.publishActionStatus(
                             action.actionId(),
                             action.softwareModuleId(),
                             HawkbitDmfActionStatus.Status.ERROR,
-                            "LwM2M Update Execute rejected: "
-                                    + installResult.detail());
+                            errorDetail);
 
                     actionTracker.remove(
                             endpoint,
@@ -193,7 +222,7 @@ public class FirmwareObservationListener implements ObservationListener {
                             installResult.status());
                     return;
                 }
-
+                actionRepository.markInstallRequested(action);
                 logger.info(
                         "LwM2M firmware install request accepted: "
                                 + "endpoint={}, actionId={}",
@@ -254,12 +283,6 @@ public class FirmwareObservationListener implements ObservationListener {
         String endpoint = registration.getEndpoint();
 
         actionTracker.find(endpoint).ifPresent(action -> {
-            if (!actionTracker.markUpdateResult(
-                    endpoint,
-                    action.actionId(),
-                    updateResult)) {
-                return;
-            }
 
             HawkbitDmfActionStatus.Status status = switch (updateResult) {
                 case 1 ->
@@ -272,12 +295,32 @@ public class FirmwareObservationListener implements ObservationListener {
                     HawkbitDmfActionStatus.Status.ERROR;
             };
 
+            String detail =
+                    "LwM2M Firmware Update Result changed to "
+                            + updateResult;
+
+            HawkbitConnectorActionState persistedStatus =
+                    HawkbitConnectorActionState.valueOf(
+                            status.name());
+
+            if (!actionRepository.updateFirmwareResult(
+                    action,
+                    updateResult,
+                    persistedStatus,
+                    detail)) {
+                return;
+            }
+
+            actionTracker.markUpdateResult(
+                    endpoint,
+                    action.actionId(),
+                    updateResult);
+
             dmfPublisher.publishActionStatus(
                     action.actionId(),
                     action.softwareModuleId(),
                     status,
-                    "LwM2M Firmware Update Result changed to "
-                            + updateResult);
+                    detail);
 
             // Deferred(11)는 아직 작업이 끝난 상태가 아니다.
             if (updateResult != 11) {
