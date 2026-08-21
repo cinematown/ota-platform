@@ -19,10 +19,14 @@ import org.springframework.web.bind.annotation.PathVariable;
 public class DeviceRegistryController {
 
         private final DeviceRepository deviceRepository;
+        private final DeviceProvisioningService provisioningService;
 
         public DeviceRegistryController(
-                        DeviceRepository deviceRepository) {
+                        DeviceRepository deviceRepository,
+                        DeviceProvisioningService provisioningService) {
+
                 this.deviceRepository = deviceRepository;
+                this.provisioningService = provisioningService;
         }
 
         @PostMapping
@@ -58,7 +62,7 @@ public class DeviceRegistryController {
                         displayName = null;
                 }
 
-                Device device = deviceRepository.create(
+                Device device = provisioningService.create(
                                 endpoint,
                                 displayName);
 

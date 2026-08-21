@@ -304,13 +304,47 @@ public class HawkbitDmfCommandListener {
 
                         FirmwareCommandResult cancelResult = firmwareUpdateDeviceService.requestCancel(endpoint);
 
-                        if (cancelResult.accepted()) {
-                                log.info(
-                                                "LwM2M firmware cancel request accepted: "
-                                                                + "endpoint={}, actionId={}",
-                                                endpoint,
-                                                command.actionId());
+                        boolean deviceConfirmed = cancelResult.accepted();
+                        boolean deviceOffline =
+                                cancelResult.status()
+                                        == FirmwareCommandResult.Status.DEVICE_OFFLINE;
+
+                        if (deviceConfirmed || deviceOffline) {
+                        String detail = deviceConfirmed
+                                ? "LwM2M Cancel Execute accepted"
+                                : "Connector action canceled while device was offline; "
+                                        + "device state is unconfirmed";
+
+                        if (!actionRepository.updateStatus(
+                                action,
+                                HawkbitConnectorActionState.CANCELED,
+                                detail)) {
+
+                                log.warn(
+                                        "Failed to persist canceled hawkBit action: "
+                                                + "endpoint={}, actionId={}",
+                                        endpoint,
+                                        action.actionId());
                                 return;
+                        }
+
+                        dmfPublisher.publishActionStatus(
+                                action.actionId(),
+                                action.softwareModuleId(),
+                                HawkbitDmfActionStatus.Status.CANCELED,
+                                detail);
+
+                        actionTracker.remove(
+                                endpoint,
+                                action.actionId());
+
+                        log.info(
+                                "hawkBit cancellation completed: "
+                                        + "endpoint={}, actionId={}, deviceConfirmed={}",
+                                endpoint,
+                                action.actionId(),
+                                deviceConfirmed);
+                        return;
                         }
 
                         dmfPublisher.publishActionStatus(

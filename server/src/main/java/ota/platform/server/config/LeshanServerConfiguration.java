@@ -2,10 +2,12 @@ package ota.platform.server.config;
 
 import ota.platform.server.listener.DeviceRegistrationListener;
 import ota.platform.server.listener.FirmwareObservationListener;
+import ota.platform.server.security.DeviceRegistryAuthorizer;
+
 import org.eclipse.leshan.server.LeshanServer;
 import org.eclipse.leshan.server.LeshanServerBuilder;
-import org.eclipse.leshan.transport.californium.server.endpoint.CaliforniumServerEndpointsProvider;
 import org.eclipse.leshan.servers.security.SecurityStore;
+import org.eclipse.leshan.transport.californium.server.endpoint.CaliforniumServerEndpointsProvider;
 import org.eclipse.leshan.transport.californium.server.endpoint.coap.CoapServerProtocolProvider;
 import org.eclipse.leshan.transport.californium.server.endpoint.coaps.CoapsServerProtocolProvider;
 import org.springframework.context.annotation.Bean;
@@ -23,7 +25,8 @@ public class LeshanServerConfiguration {
     public LeshanServer leshanServer(
         DeviceRegistrationListener registrationListener,
         FirmwareObservationListener observationListener,
-        SecurityStore securityStore) throws Exception {
+        SecurityStore securityStore,
+        DeviceRegistryAuthorizer authorizer) throws Exception {
 
         List<ObjectModel> models = ObjectLoader.loadDefault();
 
@@ -43,6 +46,7 @@ public class LeshanServerConfiguration {
                 .setEndpointsProviders(endpointsProvider)
                 .setSecurityStore(securityStore)
                 .setObjectModelProvider(new StaticModelProvider(models))
+                .setAuthorizer(authorizer)
                 .build();
         
         registrationListener.setLeshanServer(server);

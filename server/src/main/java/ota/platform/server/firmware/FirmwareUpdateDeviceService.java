@@ -4,8 +4,10 @@ import org.eclipse.leshan.core.request.ExecuteRequest;
 import org.eclipse.leshan.core.request.WriteRequest;
 import org.eclipse.leshan.core.response.ExecuteResponse;
 import org.eclipse.leshan.core.response.WriteResponse;
+import org.eclipse.leshan.core.request.exception.RequestCanceledException;
 import org.eclipse.leshan.server.LeshanServer;
 import org.eclipse.leshan.server.registration.Registration;
+
 
 import org.springframework.stereotype.Service;
 
@@ -28,16 +30,25 @@ public class FirmwareUpdateDeviceService {
             return FirmwareCommandResult.deviceOffline();
         }
 
-        WriteResponse response = leshanServer.send(
+        try{
+            WriteResponse response = leshanServer.send(
                 registration,
                 new WriteRequest(5, 0, 1, packageUri));
+            
+            if (response == null) {
+                return FirmwareCommandResult.deviceOffline();
+            }
 
-        if (response != null && response.isSuccess()) {
-            return FirmwareCommandResult.acceptedResult();
+            if (response.isSuccess()) {
+                return FirmwareCommandResult.acceptedResult();
+            }
+
+            return FirmwareCommandResult.rejected(String.valueOf(response));
+
+        } catch (RequestCanceledException error) {
+            return FirmwareCommandResult.deviceOffline();
         }
 
-        return FirmwareCommandResult.rejected(
-                String.valueOf(response));
     }
 
     public FirmwareCommandResult requestInstall(
@@ -49,16 +60,25 @@ public class FirmwareUpdateDeviceService {
             return FirmwareCommandResult.deviceOffline();
         }
 
-        ExecuteResponse response = leshanServer.send(
+        try {
+            ExecuteResponse response = leshanServer.send(
                 registration,
                 new ExecuteRequest(5, 0, 2));
 
-        if (response != null && response.isSuccess()) {
-            return FirmwareCommandResult.acceptedResult();
-        }
+            if (response == null) {
+                return FirmwareCommandResult.deviceOffline();
+            }
 
-        return FirmwareCommandResult.rejected(
-                String.valueOf(response));
+            if (response.isSuccess()) {
+                return FirmwareCommandResult.acceptedResult();
+            }
+
+            return FirmwareCommandResult.rejected(
+                    String.valueOf(response));
+
+        } catch (RequestCanceledException error) {
+            return FirmwareCommandResult.deviceOffline();
+        }
     }
 
     public FirmwareCommandResult requestCancel(
@@ -69,17 +89,27 @@ public class FirmwareUpdateDeviceService {
         if (registration == null) {
             return FirmwareCommandResult.deviceOffline();
         }
+        
+        try {
+            ExecuteResponse response = leshanServer.send(
+                        registration,
+                        new ExecuteRequest(5, 0, 10));
 
-        ExecuteResponse response = leshanServer.send(
-                registration,
-                new ExecuteRequest(5, 0, 10));
+            if (response == null) {
+                return FirmwareCommandResult.deviceOffline();
+            }
 
-        if (response != null && response.isSuccess()) {
-            return FirmwareCommandResult.acceptedResult();
+            if (response.isSuccess()) {
+                return FirmwareCommandResult.acceptedResult();
+            }
+
+            return FirmwareCommandResult.rejected(
+                    String.valueOf(response));
+
+        } catch (RequestCanceledException error) {
+            return FirmwareCommandResult.deviceOffline();
         }
 
-        return FirmwareCommandResult.rejected(
-                String.valueOf(response));
     }
 
     private Registration findRegistration(String endpoint) {

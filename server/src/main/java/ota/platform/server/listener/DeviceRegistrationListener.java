@@ -1,5 +1,8 @@
 package ota.platform.server.listener;
+
 import ota.platform.server.hawkbit.HawkbitDmfPublisher;
+import ota.platform.server.device.Device;
+import ota.platform.server.device.DeviceRepository;
 
 import java.util.Collection;
 
@@ -19,6 +22,7 @@ public class DeviceRegistrationListener implements RegistrationListener {
     private LeshanServer leshanServer;
     private final HawkbitDmfPublisher hawkbitDmfPublisher;
     private final FirmwareObservationListener firmwareObservationListener;
+    private final DeviceRepository deviceRepository;
 
     private static final Logger logger =
             LoggerFactory.getLogger(DeviceRegistrationListener.class);
@@ -26,9 +30,11 @@ public class DeviceRegistrationListener implements RegistrationListener {
  
     public DeviceRegistrationListener(
             HawkbitDmfPublisher hawkbitDmfPublisher,
-            FirmwareObservationListener firmwareObservationListener) {
+            FirmwareObservationListener firmwareObservationListener,
+            DeviceRepository deviceRepository) {
         this.hawkbitDmfPublisher = hawkbitDmfPublisher;
         this.firmwareObservationListener = firmwareObservationListener;
+        this.deviceRepository = deviceRepository;
     }
 
     public void setLeshanServer(LeshanServer leshanServer) {
@@ -79,9 +85,22 @@ public class DeviceRegistrationListener implements RegistrationListener {
                 "LwM2M client registered: endpoint={}, address={}",
                 registration.getEndpoint(),
                 registration.getSocketAddress());
+        
+        String endpoint = registration.getEndpoint();
 
-        hawkbitDmfPublisher.publishThingCreated(
-                registration.getEndpoint());
+        Device device = deviceRepository
+                .findByEndpoint(endpoint)
+                .orElse(null);
+
+        if (device == null || !device.enabled()) {
+        logger.warn(
+                "Unmanaged LwM2M client registration ignored: "
+                        + "endpoint={}",
+                endpoint);
+        return;
+        }
+
+        hawkbitDmfPublisher.publishThingCreated(endpoint);
 
         observeFirmwareResource(registration, 3, "Firmware State");
         observeFirmwareResource(registration, 5, "Firmware Update Result");
