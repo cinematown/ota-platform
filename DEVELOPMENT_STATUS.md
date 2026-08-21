@@ -1,6 +1,6 @@
 # Development Status
 
-Last updated: 2026-08-14
+Last updated: 2026-08-21
 
 이 문서는 새 개발 세션이 현재 작업 지점부터 바로 이어갈 수 있도록 관리하는
 인수인계 문서다. 전체 시스템 구조와 장기 결정은
@@ -527,6 +527,20 @@ rollback은 장치 제품 통합 단계의 남은 항목이다.
 - 76164 bytes 다운로드에 약 31초가 걸림
 - 현재 38400 baud UART와 512-byte Block2 순차 처리의 실효 속도는 약 2.4 KiB/s
 
+### 8.10 Admin UI 운영 콘솔 개편 완료
+
+- `DESIGN.md` color, typography, focus token을 공통 CSS로 옮기고 인라인 CSS와 JS 제거
+- 고정 sidebar, 얇은 top bar, compact toolbar/table 기반 관리 콘솔 shell 적용
+- 장문 소개, 개발 설명, hero, 대형 metric card와 설명 footer 제거
+- Fleet 요약, 이름/endpoint 검색, Online/Offline/PSK 필요 filter 추가
+- 상세 화면을 장치 context와 상태/Resource/Credential 작업 tab으로 분리
+- Firmware State/Result, capability와 BMS voltage live Read 통합
+- 자주 쓰는 LwM2M Resource preset과 Registered Object Link 복사 기능 추가
+- Web Crypto 기반 32-byte PSK 생성, 보기, 복사와 lifecycle 경고 UX 추가
+- firmware artifact와 배포 작업은 계속 hawkBit UI로 연결해 source of truth 유지
+- 1050px sidebar 축소와 760px 이하 mobile console layout 적용
+- standalone MockMvc와 Thymeleaf로 dashboard/detail 실제 rendering 회귀 test 추가
+
 ## 9. 이후 작업 순서
 
 1. PostgreSQL 기반 DMF Action 멱등성 및 재시작 복구
@@ -586,7 +600,8 @@ Linux reference client의 PSK 환경변수는 실제 장치의 secure provisioni
 - 올바른 PSK에서 Linux reference Registration과 READY
 - 잘못된 PSK에서 Registration 거부
 - credential create, rotate, revoke와 DTLS session 종료
-- Admin UI의 Device 목록, credential 관리와 LwM2M Resource Read
+- Admin UI의 Fleet 요약, 검색/filter와 Device 상세 rendering
+- credential lifecycle, live Firmware/BMS 상태와 LwM2M Resource Read
 
 ### Firmware와 hawkBit
 

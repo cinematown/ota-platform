@@ -7,5 +7,6 @@ public record DashboardDevice(
         String endpoint,
         String displayName,
         boolean enabled,
-        boolean online) {
+        boolean online,
+        boolean credentialProvisioned) {
 }

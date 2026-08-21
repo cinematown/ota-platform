@@ -3,366 +3,394 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Device Detail</title>
-
-    <style>
-        body {
-            margin: 0;
-            font-family: sans-serif;
-            background: #f4f6f8;
-            color: #1f2937;
-        }
-
-        main {
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 40px 24px;
-        }
-
-        section {
-            margin-top: 24px;
-            padding: 24px;
-            background: white;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: 12px;
-            border-bottom: 1px solid #e5e7eb;
-            text-align: left;
-        }
-
-        .online {
-            color: #15803d;
-        }
-
-        .offline {
-            color: #b91c1c;
-        }
-    </style>
+    <meta name="color-scheme" content="light">
+    <title th:text="${(device.displayName != null
+            ? device.displayName : device.endpoint) + ' · OTA Platform'}">
+        Device · OTA Platform
+    </title>
+    <link rel="stylesheet" th:href="@{/css/admin.css}">
+    <script defer th:src="@{/js/admin-device.js}"></script>
 </head>
-
-<body>
-<main>
-    <nav>
-        <a th:href="@{/admin}">← 장치 목록</a>
-        |
-        <a href="http://localhost:8088"
-           target="_blank"
-           rel="noopener">
-            hawkBit Firmware 관리
+<body th:attr="data-endpoint=${device.endpoint},data-online=${device.online}">
+<a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+<div class="admin-shell">
+    <aside class="sidebar">
+        <a class="sidebar-brand" th:href="@{/admin}" aria-label="OTA Platform 홈">
+            <span class="brand-mark" aria-hidden="true">O</span>
+            <span>OTA Platform</span>
         </a>
-    </nav>
+        <nav class="sidebar-nav" aria-label="관리 메뉴">
+            <p class="nav-section-label">Management</p>
+            <a class="nav-item" th:href="@{/admin}" aria-current="page">
+                <svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true">
+                    <rect x="2.5" y="3" width="15" height="11" rx="1.5"
+                          fill="none" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M6 17h8M8 14v3m4-3v3M6 7h2m2 0h4M6 10h5"
+                          fill="none" stroke="currentColor" stroke-width="1.5"
+                          stroke-linecap="round"/>
+                </svg>
+                <span class="nav-text">장치</span>
+            </a>
+            <a class="nav-item" th:href="${hawkbitUiUrl}"
+               target="_blank" rel="noopener">
+                <svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M3 5.5h14v10H3zM6 3h8v2.5M6 9h8m-8 3h5"
+                          fill="none" stroke="currentColor" stroke-width="1.5"
+                          stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="nav-text">Firmware</span>
+                <span class="nav-external" aria-hidden="true">↗</span>
+            </a>
+        </nav>
+    </aside>
+    <div class="app-main">
+        <header class="topbar">
+            <div class="breadcrumbs" aria-label="현재 위치">
+                <a th:href="@{/admin}">장치</a>
+                <span class="separator" aria-hidden="true">/</span>
+                <span aria-current="page"
+                      th:text="${device.displayName != null
+                              ? device.displayName : device.endpoint}">Device</span>
+            </div>
+            <div class="topbar-actions">
+                <a class="button button-secondary" th:href="${hawkbitUiUrl}"
+                   target="_blank" rel="noopener">Firmware</a>
+            </div>
+        </header>
+        <main class="workspace" id="main-content">
+            <div class="page-heading">
+                <div class="page-title-group">
+                    <h1 class="page-title"
+                        th:text="${device.displayName != null
+                                ? device.displayName : device.endpoint}">
+                        Device
+                    </h1>
+                    <p class="page-subtitle" th:text="${device.endpoint}">endpoint</p>
+                </div>
+                <div class="device-header-status" aria-label="장치 상태">
+                    <span class="status"
+                          th:classappend="${device.online
+                                  ? 'status-online status-strong' : ''}"
+                          th:text="${device.online ? 'Online' : 'Offline'}">Offline</span>
+                    <span class="status"
+                          th:classappend="${device.credentialProvisioned
+                                  ? 'status-online' : ''}"
+                          th:text="${device.credentialProvisioned
+                                  ? 'PSK Ready' : 'PSK Required'}">PSK Required</span>
+                    <button class="button button-secondary"
+                            id="refresh-all"
+                            type="button"
+                            th:disabled="${!device.online}">새로고침</button>
+                </div>
+            </div>
 
-    <h1 th:text="${device.displayName != null
-            ? device.displayName
-            : device.endpoint}">
-        Device
-    </h1>
+            <div class="device-layout">
+                <aside class="surface device-context">
+                    <div class="device-identity">
+                        <strong th:text="${device.displayName != null
+                                ? device.displayName : device.endpoint}">Device</strong>
+                        <span class="mono muted" th:text="${device.endpoint}">endpoint</span>
+                        <p class="device-address"
+                           th:if="${registrationAddress != null}"
+                           th:text="${registrationAddress}">address</p>
+                    </div>
+                    <div class="detail-nav" role="tablist" aria-label="장치 상세 메뉴">
+                        <button class="detail-nav-button"
+                                type="button"
+                                role="tab"
+                                aria-selected="true"
+                                aria-controls="overview-panel"
+                                data-detail-tab="overview">
+                            <span class="detail-nav-icon" aria-hidden="true">◫</span>
+                            상태
+                        </button>
+                        <button class="detail-nav-button"
+                                type="button"
+                                role="tab"
+                                aria-selected="false"
+                                aria-controls="resources-panel"
+                                data-detail-tab="resources">
+                            <span class="detail-nav-icon" aria-hidden="true">⌁</span>
+                            Resource
+                        </button>
+                        <button class="detail-nav-button"
+                                type="button"
+                                role="tab"
+                                aria-selected="false"
+                                aria-controls="security-panel"
+                                data-detail-tab="security">
+                            <span class="detail-nav-icon" aria-hidden="true">◆</span>
+                            Credential
+                        </button>
+                    </div>
+                    <div class="object-nav">
+                        <p class="object-nav-title">Objects</p>
+                        <div class="object-list" th:if="${!#lists.isEmpty(objectLinks)}">
+                            <button class="object-chip"
+                                    type="button"
+                                    th:each="objectLink : ${objectLinks}"
+                                    th:text="${objectLink}"
+                                    th:attr="data-object-link=${objectLink}">/5/0</button>
+                        </div>
+                        <span class="muted"
+                              th:if="${#lists.isEmpty(objectLinks)}">없음</span>
+                    </div>
+                </aside>
 
-    <section>
-        <h2>장치 상태</h2>
+                <div class="detail-pane">
+                    <section class="tab-panel"
+                             id="overview-panel"
+                             role="tabpanel"
+                             data-tab-panel="overview">
+                        <div class="surface">
+                            <header class="surface-header">
+                                <h2 class="surface-title">장치 상태</h2>
+                                <button class="button button-quiet"
+                                        type="button"
+                                        data-read-action="all"
+                                        th:disabled="${!device.online}">전체 읽기</button>
+                            </header>
+                            <div class="offline-notice" th:if="${!device.online}">
+                                <span class="status">장치가 오프라인입니다.</span>
+                            </div>
+                            <div class="table-scroll">
+                                <table class="resource-table">
+                                    <thead>
+                                    <tr>
+                                        <th scope="col">Resource</th>
+                                        <th scope="col">Path</th>
+                                        <th scope="col">Value</th>
+                                        <th class="resource-action" scope="col">Action</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    <tr id="firmware-state-card">
+                                        <td class="resource-name">Firmware state</td>
+                                        <td class="resource-path mono">/5/0/3</td>
+                                        <td>
+                                            <strong class="resource-value"
+                                                    id="firmware-state-value">—</strong>
+                                            <span class="resource-meta"
+                                                  id="firmware-state-meta">읽기 전</span>
+                                        </td>
+                                        <td class="resource-action">
+                                            <button class="button button-text"
+                                                    type="button"
+                                                    data-read-action="firmware"
+                                                    th:disabled="${!device.online}">읽기</button>
+                                        </td>
+                                    </tr>
+                                    <tr id="update-result-card">
+                                        <td class="resource-name">Update result</td>
+                                        <td class="resource-path mono">/5/0/5</td>
+                                        <td>
+                                            <strong class="resource-value"
+                                                    id="update-result-value">—</strong>
+                                            <span class="resource-meta"
+                                                  id="update-result-meta">읽기 전</span>
+                                        </td>
+                                        <td class="resource-action">
+                                            <button class="button button-text"
+                                                    type="button"
+                                                    data-read-action="firmware"
+                                                    th:disabled="${!device.online}">읽기</button>
+                                        </td>
+                                    </tr>
+                                    <tr id="capability-card">
+                                        <td class="resource-name">Delivery capability</td>
+                                        <td class="resource-path mono">/5/0/8, /5/0/9</td>
+                                        <td>
+                                            <strong class="resource-value"
+                                                    id="capability-value">—</strong>
+                                            <span class="resource-meta"
+                                                  id="capability-meta">읽기 전</span>
+                                        </td>
+                                        <td class="resource-action">
+                                            <button class="button button-text"
+                                                    type="button"
+                                                    data-read-action="capabilities"
+                                                    th:disabled="${!device.online}">읽기</button>
+                                        </td>
+                                    </tr>
+                                    <tr id="bms-voltage-card">
+                                        <td class="resource-name">BMS voltage</td>
+                                        <td class="resource-path mono">/33000/0/0</td>
+                                        <td>
+                                            <strong class="resource-value"
+                                                    id="bms-voltage-value">—</strong>
+                                            <span class="resource-meta"
+                                                  id="bms-voltage-meta">읽기 전</span>
+                                        </td>
+                                        <td class="resource-action">
+                                            <button class="button button-text"
+                                                    type="button"
+                                                    data-read-action="bms"
+                                                    th:disabled="${!device.online}">읽기</button>
+                                        </td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
 
-        <p>
-            Endpoint:
-            <strong th:text="${device.endpoint}">endpoint</strong>
-        </p>
+                    <section class="tab-panel"
+                             id="resources-panel"
+                             role="tabpanel"
+                             data-tab-panel="resources"
+                             hidden>
+                        <div class="surface">
+                            <header class="surface-header">
+                                <h2 class="surface-title">LwM2M Resource</h2>
+                            </header>
+                            <div class="surface-body">
+                                <div class="preset-row" aria-label="Resource 프리셋">
+                                    <button class="preset-chip" type="button"
+                                            data-resource-preset="3/0/3"
+                                            th:disabled="${!device.online}">/3/0/3</button>
+                                    <button class="preset-chip" type="button"
+                                            data-resource-preset="5/0/3"
+                                            th:disabled="${!device.online}">/5/0/3</button>
+                                    <button class="preset-chip" type="button"
+                                            data-resource-preset="5/0/5"
+                                            th:disabled="${!device.online}">/5/0/5</button>
+                                    <button class="preset-chip" type="button"
+                                            data-resource-preset="33000/0/0"
+                                            th:disabled="${!device.online}">/33000/0/0</button>
+                                </div>
+                                <form id="resource-read-form">
+                                    <div class="form-grid">
+                                        <label class="form-field">
+                                            <span>Object ID</span>
+                                            <input class="text-input" id="object-id"
+                                                   type="number" min="0"
+                                                   inputmode="numeric" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Instance ID</span>
+                                            <input class="text-input" id="instance-id"
+                                                   type="number" min="0"
+                                                   inputmode="numeric" value="0" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Resource ID</span>
+                                            <input class="text-input" id="resource-id"
+                                                   type="number" min="0"
+                                                   inputmode="numeric" required>
+                                        </label>
+                                    </div>
+                                    <div class="form-actions">
+                                        <button class="button" type="submit"
+                                                th:disabled="${!device.online}">읽기</button>
+                                    </div>
+                                </form>
+                                <pre class="result-panel" id="resource-result"
+                                     aria-live="polite">—</pre>
+                            </div>
+                        </div>
+                    </section>
 
-        <p>
-            LwM2M:
-            <strong
-                th:class="${device.online ? 'online' : 'offline'}"
-                th:text="${device.online ? 'Online' : 'Offline'}">
-                Offline
-            </strong>
-        </p>
-
-        <p th:if="${registrationAddress != null}">
-            Address:
-            <span th:text="${registrationAddress}">address</span>
-        </p>
-    </section>
-
-    <section>
-        <h2>DTLS-PSK Credential</h2>
-
-        <p th:if="${activeCredential != null}">
-            상태: <strong>ACTIVE</strong><br>
-            Identity:
-            <code th:text="${activeCredential.identity}">identity</code><br>
-            Reference:
-            <code th:text="${activeCredential.secretReference}">
-                db:credential-id
-            </code>
-        </p>
-
-        <p th:if="${activeCredential == null}">
-            현재 활성 PSK가 없습니다.
-        </p>
-
-        <form id="credential-form"
-            th:attr="data-mode=${
-                activeCredential == null ? 'create' : 'rotate'
-            }">
-
-            <label>
-                Identity
-                <input id="credential-identity"
-                    maxlength="255"
-                    required
-                    th:value="${
-                        activeCredential != null
-                        ? activeCredential.identity
-                        : device.endpoint
-                    }">
-            </label>
-
-            <label>
-                새 PSK (hex)
-                <input id="credential-key"
-                    type="password"
-                    minlength="32"
-                    maxlength="128"
-                    pattern="[0-9a-fA-F]+"
-                    autocomplete="new-password"
-                    required>
-            </label>
-
-            <button type="submit"
-                    th:text="${
-                        activeCredential == null
-                        ? 'PSK 생성'
-                        : 'PSK 교체'
-                    }">
-                PSK 생성
-            </button>
-        </form>
-
-        <button id="credential-revoke"
-                type="button"
-                th:if="${activeCredential != null}">
-            PSK 폐기
-        </button>
-
-        <pre id="credential-result"></pre>
-    </section>
-
-    <section>
-        <h2>Registered Object Links</h2>
-
-        <ul th:if="${!#lists.isEmpty(objectLinks)}">
-            <li th:each="objectLink : ${objectLinks}">
-                <code th:text="${objectLink}">/0</code>
-            </li>
-        </ul>
-
-        <p th:if="${#lists.isEmpty(objectLinks)}">
-            현재 확인할 수 있는 Object Link가 없습니다.
-        </p>
-    </section>
-
-    <section>
-        <h2>Object 작업</h2>
-
-        <form id="resource-read-form">
-            <label>
-                Object ID
-                <input id="object-id"
-                    type="number"
-                    min="0"
-                    required>
-            </label>
-
-            <label>
-                Instance ID
-                <input id="instance-id"
-                    type="number"
-                    min="0"
-                    value="0"
-                    required>
-            </label>
-
-            <label>
-                Resource ID
-                <input id="resource-id"
-                    type="number"
-                    min="0"
-                    required>
-            </label>
-
-            <button type="submit">Resource 읽기</button>
-        </form>
-
-        <pre id="resource-result">
-        읽을 Resource 경로를 입력하세요.
-        </pre>
-
-        <table>
-            <thead>
-            <tr>
-                <th>경로</th>
-                <th>Object</th>
-                <th>작업</th>
-            </tr>
-            </thead>
-
-            <tbody>
-            <tr>
-                <td>/5/0</td>
-                <td>Firmware Update 1.2</td>
-                <td>
-                    <a th:href="@{/api/devices/{endpoint}/firmware/status
-                            (endpoint=${device.endpoint})}">
-                        상태 읽기
-                    </a>
-                </td>
-            </tr>
-
-            <tr>
-                <td>/33000/0</td>
-                <td>BMS</td>
-                <td>
-                    <a th:href="@{/api/devices/{endpoint}/bms/voltage
-                            (endpoint=${device.endpoint})}">
-                        전압 읽기
-                    </a>
-                </td>
-            </tr>
-            </tbody>
-        </table>
-    </section>
-</main>
-<script th:inline="javascript">
-    const endpoint = /*[[${device.endpoint}]]*/ "";
-
-    document
-        .getElementById("resource-read-form")
-        .addEventListener("submit", async event => {
-            event.preventDefault();
-
-            const objectId =
-                document.getElementById("object-id").value;
-            const instanceId =
-                document.getElementById("instance-id").value;
-            const resourceId =
-                document.getElementById("resource-id").value;
-            const result =
-                document.getElementById("resource-result");
-
-            const path =
-                `/api/devices/${encodeURIComponent(endpoint)}`
-                + `/lwm2m/${objectId}/${instanceId}/${resourceId}`;
-
-            result.textContent = "LwM2M Read 요청 중...";
-
-            try {
-                const response = await fetch(path);
-                const body = await response.text();
-
-                if (!response.ok) {
-                    result.textContent =
-                        `HTTP ${response.status}\n${body}`;
-                    return;
-                }
-
-                result.textContent =
-                    JSON.stringify(JSON.parse(body), null, 2);
-
-            } catch (error) {
-                result.textContent =
-                    `요청 실패: ${error.message}`;
-            }
-        });
-
-    const credentialForm =
-        document.getElementById("credential-form");
-    const credentialResult =
-        document.getElementById("credential-result");
-
-    credentialForm.addEventListener("submit", async event => {
-        event.preventDefault();
-
-        const mode = credentialForm.dataset.mode;
-        const identity =
-            document.getElementById("credential-identity").value;
-        const keyHex =
-            document.getElementById("credential-key").value;
-
-        const suffix = mode === "rotate" ? "/rotate" : "";
-        const path =
-            `/api/devices/${encodeURIComponent(endpoint)}`
-            + `/credentials/psk${suffix}`;
-
-        credentialResult.textContent =
-            mode === "rotate" ? "PSK 교체 중..." : "PSK 생성 중...";
-
-        try {
-            const response = await fetch(path, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    identity,
-                    keyHex
-                })
-            });
-
-            const body = await response.text();
-
-            if (!response.ok) {
-                credentialResult.textContent =
-                    `HTTP ${response.status}\n${body}`;
-                return;
-            }
-
-            document.getElementById("credential-key").value = "";
-            window.location.reload();
-        } catch (error) {
-            credentialResult.textContent =
-                `요청 실패: ${error.message}`;
-        }
-    });
-
-    const revokeButton =
-        document.getElementById("credential-revoke");
-
-    if (revokeButton != null) {
-        revokeButton.addEventListener("click", async () => {
-            if (!window.confirm(
-                    "활성 PSK를 폐기하고 DTLS 연결을 종료할까요?")) {
-                return;
-            }
-
-            credentialResult.textContent = "PSK 폐기 중...";
-
-            const path =
-                `/api/devices/${encodeURIComponent(endpoint)}`
-                + "/credentials/psk/revoke";
-
-            try {
-                const response = await fetch(path, {
-                    method: "POST"
-                });
-
-                if (!response.ok) {
-                    credentialResult.textContent =
-                        `HTTP ${response.status}\n`
-                        + await response.text();
-                    return;
-                }
-
-                window.location.reload();
-            } catch (error) {
-                credentialResult.textContent =
-                    `요청 실패: ${error.message}`;
-            }
-        });
-    }
-</script>
+                    <section class="tab-panel"
+                             id="security-panel"
+                             role="tabpanel"
+                             data-tab-panel="security"
+                             hidden>
+                        <div class="surface">
+                            <header class="surface-header">
+                                <h2 class="surface-title">DTLS-PSK Credential</h2>
+                            </header>
+                            <div class="surface-body">
+                                <dl class="credential-status">
+                                    <div>
+                                        <dt>Status</dt>
+                                        <dd>
+                                            <span class="status"
+                                                  th:classappend="${activeCredential != null
+                                                          ? 'status-online status-strong' : ''}"
+                                                  th:text="${activeCredential != null
+                                                          ? 'Active' : 'Not provisioned'}">
+                                                Not provisioned
+                                            </span>
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt>Identity</dt>
+                                        <dd class="mono"
+                                            th:text="${activeCredential != null
+                                                    ? activeCredential.identity : '—'}">—</dd>
+                                    </div>
+                                    <div>
+                                        <dt>Secret reference</dt>
+                                        <dd class="mono"
+                                            th:text="${activeCredential != null
+                                                    ? activeCredential.secretReference : '—'}">—</dd>
+                                    </div>
+                                </dl>
+                                <form id="credential-form"
+                                      th:attr="data-mode=${activeCredential == null
+                                              ? 'create' : 'rotate'}">
+                                    <label class="form-field">
+                                        <span>Identity</span>
+                                        <input class="text-input"
+                                               id="credential-identity"
+                                               maxlength="255"
+                                               autocomplete="username"
+                                               required
+                                               th:value="${activeCredential != null
+                                                       ? activeCredential.identity
+                                                       : device.endpoint}">
+                                    </label>
+                                    <div class="form-field">
+                                        <label class="field-label"
+                                               for="credential-key">새 PSK</label>
+                                        <div class="input-with-actions">
+                                            <input class="text-input mono"
+                                                   id="credential-key"
+                                                   type="password"
+                                                   minlength="32"
+                                                   maxlength="128"
+                                                   pattern="[0-9a-fA-F]{32,128}"
+                                                   autocomplete="new-password"
+                                                   spellcheck="false"
+                                                   placeholder="32–128자리 hex"
+                                                   required>
+                                            <button class="button button-quiet"
+                                                    id="credential-generate"
+                                                    type="button">생성</button>
+                                            <button class="button button-quiet"
+                                                    id="credential-toggle"
+                                                    type="button"
+                                                    aria-pressed="false">보기</button>
+                                            <button class="button button-quiet"
+                                                    id="credential-copy"
+                                                    type="button">복사</button>
+                                        </div>
+                                    </div>
+                                    <div class="form-actions">
+                                        <button class="button"
+                                                type="submit"
+                                                th:text="${activeCredential == null
+                                                        ? 'PSK 생성' : 'PSK 교체'}">PSK 생성</button>
+                                        <button class="button button-danger"
+                                                id="credential-revoke"
+                                                type="button"
+                                                th:if="${activeCredential != null}">PSK 폐기</button>
+                                    </div>
+                                </form>
+                                <p class="inline-warning">
+                                    PSK 교체 시 현재 DTLS 연결이 종료됩니다.
+                                </p>
+                                <p class="form-feedback"
+                                   id="credential-result"
+                                   aria-live="polite"></p>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
 </body>
 </html>
